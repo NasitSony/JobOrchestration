@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: veriflow
+      POSTGRES_PASSWORD: veriflow
+      POSTGRES_DB: veriflow
+    ports:
+      - "5436:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U veriflow -d veriflow"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
