@@ -82,7 +82,7 @@ Expected output:
 ```bash
 hello-from-veriflow
 done
-bash
+```
 
 **🗄️ 6. Inspect Job Lifecycle in Database**
 
