@@ -30,7 +30,9 @@ docker run --rm -it \
 ```
 
 Expected log:
-- job-api listening on :8080
+```bash
+job-api listening on :8080
+```
 
 **⚙️ 3. Run Scheduler Service**
 
@@ -47,7 +49,9 @@ docker run --rm -it \
 ```
 
 Expected log:
-- scheduler started queue=default interval=700ms
+```bash
+scheduler started queue=default interval=700ms
+```
 
 **📨 4. Submit a Job**
 
@@ -68,8 +72,10 @@ You should receive a JSON response containing the job ID.
 **☸️ 5. Observe Kubernetes Execution**
 
 List jobs:
-- kubectl get jobs
-- List pods:
+```bash
+kubectl get jobs
+```
+List pods:
 ```bash
 kubectl get pods
 ```
@@ -86,13 +92,13 @@ done
 
 **🗄️ 6. Inspect Job Lifecycle in Database**
 
-Recent Runs
+***Recent Runs***
 ```bash
 docker compose exec -T postgres psql -U veriflow -d veriflow -c \
 "select state, k8s_job_name, created_at from runs order by created_at desc limit 5;"
 ```
 
-Lifecycle Events
+***Lifecycle Events***
 ```bash
 docker compose exec -T postgres psql -U veriflow -d veriflow -c \
 "select ts, type from events order by ts desc limit 10;"
