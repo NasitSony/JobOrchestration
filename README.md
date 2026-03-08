@@ -148,6 +148,9 @@ Expected event shape:
 
 ---
 
+## 📘 Operations Guide
+See [RUNBOOK.md](RUNBOOK.md) for full operational steps.
+
 ## Notes for hiring managers
 
 This project demonstrates:
