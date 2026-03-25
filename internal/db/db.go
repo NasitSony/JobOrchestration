@@ -147,7 +147,7 @@ func (s *Store) CreateJobIdempotent(ctx context.Context, idemKey string, spec Jo
 
 	// event
 	_, _ = tx.Exec(ctx, `
-		insert into events(job_id, type, payload) values ($1, 'JOB_CREATED', '{}'::jsonb)
+		insert into events(job_id, type, payload) values ($1, 'JOB_SUBMITTED', '{}'::jsonb)
 	`, jobID)
 
 	j, err := getJobByIDTx(ctx, tx, jobID)

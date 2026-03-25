@@ -64,7 +64,7 @@ func (s *Store) ScheduleRetryOrFail(ctx context.Context, jobID, runID uuid.UUID)
 		// event
 		_, _ = tx.Exec(ctx, `
 			insert into events(job_id, run_id, type, payload)
-			values ($1,$2,'JOB_RETRY_SCHEDULED', jsonb_build_object('next_run_at',$3,'delay_seconds',$4,'attempt',$5))
+			values ($1,$2,'RETRY_TRIGGERED', jsonb_build_object('next_run_at',$3,'delay_seconds',$4,'attempt',$5))
 		`, jobID, runID, next, int(delay.Seconds()), attempt)
 
 		return tx.Commit(ctx)
@@ -78,7 +78,7 @@ func (s *Store) ScheduleRetryOrFail(ctx context.Context, jobID, runID uuid.UUID)
 
 	_, _ = tx.Exec(ctx, `
 		insert into events(job_id, run_id, type, payload)
-		values ($1,$2,'JOB_FAILED_FINAL', '{}'::jsonb)
+		values ($1,$2,'JOB_FAILED', '{}'::jsonb)
 	`, jobID, runID)
 
 	return tx.Commit(ctx)
