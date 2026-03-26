@@ -95,8 +95,9 @@ func main() {
 					if kjob.Status.Failed > 0 {
 						//reason := "k8s_job_failed"
 						//_ = store.MarkRunFailed(ctx, r.JobID, r.RunID, reason)
+						log.Printf("run failed job_id=%s run_id=%s reason=%s", r.JobID, r.RunID, "k8s_job_failed")
 						_ = store.MarkRunFailedOnly(ctx, r.RunID, "k8s_job_failed")
-						_ = store.ScheduleRetryOrFail(ctx, r.JobID, r.RunID)
+						_ = store.ScheduleRetryOrFail(ctx, r.JobID, r.RunID, "k8s_job_failed")
 						continue
 					}
 				}
