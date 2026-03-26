@@ -18,6 +18,25 @@ import (
 	"github.com/NasitSony/veriflow/internal/k8s"
 )
 
+type NodeCapacity struct {
+	Name      string
+	TotalGPUs int
+	UsedGPUs  int
+}
+
+func (n NodeCapacity) FreeGPUs() int {
+	return n.TotalGPUs - n.UsedGPUs
+}
+
+func pickNodeForJob(nodes []NodeCapacity, gpuCount int) (NodeCapacity, bool) {
+	for _, n := range nodes {
+		if n.FreeGPUs() >= gpuCount {
+			return n, true
+		}
+	}
+	return NodeCapacity{}, false
+}
+
 func main() {
 
 	k8sClient, err := k8s.NewClient()
@@ -85,6 +104,12 @@ func main() {
 		}
 	}()
 
+	// 🔥 Day 3: basic GPU inventory
+	nodes := []NodeCapacity{
+		{Name: "gpu-node-a", TotalGPUs: 2, UsedGPUs: 0},
+		{Name: "gpu-node-b", TotalGPUs: 4, UsedGPUs: 0},
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -104,6 +129,30 @@ func main() {
 			if !ok {
 				continue
 			}
+
+			// 🔥 Day 3: GPU-aware fit check before dispatch
+			gpuNeeded := j.Spec.GPUCount
+			node, fit := pickNodeForJob(nodes, gpuNeeded)
+			if !fit {
+				log.Printf(
+					"insufficient GPU capacity for job_id=%s run_id=%s need_gpu=%d",
+					j.JobID,
+					run.RunID,
+					gpuNeeded,
+				)
+				continue
+			}
+
+			log.Printf(
+				"selected node for job_id=%s run_id=%s node=%s need_gpu=%d free_gpu=%d job_type=%s",
+				j.JobID,
+				run.RunID,
+				node.Name,
+				gpuNeeded,
+				node.FreeGPUs(),
+				j.Spec.JobType,
+			)
+
 			jobName := fmt.Sprintf("run-%s", run.RunID.String())
 
 			err = k8s.CreateJob(
