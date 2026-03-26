@@ -224,7 +224,7 @@ func (s *Store) ClaimNextPendingJob(ctx context.Context, queue string) (claimedJ
         from jobs
         where state='PENDING'
         and queue=$1
-        and next_run_at <= now()   
+        and (next_run_at is null or next_run_at <= now())   
         order by priority desc, created_at asc
         for update skip locked
         limit 1
