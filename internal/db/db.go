@@ -34,9 +34,10 @@ type JobSpec struct {
 		Memory string `json:"memory,omitempty"`
 	} `json:"resources,omitempty"`
 
-	Queue      string `json:"queue,omitempty"`
-	Priority   int    `json:"priority,omitempty"`
-	MaxRetries int    `json:"max_retries,omitempty"`
+	Queue          string `json:"queue,omitempty"`
+	Priority       int    `json:"priority,omitempty"`
+	MaxRetries     int    `json:"max_retries,omitempty"`
+	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
 
 	// 🔥 NEW AI FIELDS
 	JobType       string `json:"jobType,omitempty"`  // training | batch-inference
@@ -480,6 +481,47 @@ func (s *Store) GetActiveGPUUsageByNode(ctx context.Context) (map[string]int, er
 		if node != "" {
 			out[node] += used
 		}
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListTimedOutRuns(ctx context.Context) ([]struct {
+	RunID          uuid.UUID
+	JobID          uuid.UUID
+	TimeoutSeconds int
+	StartedAt      *time.Time
+}, error) {
+	rows, err := s.pool.Query(ctx, `
+		select r.run_id, r.job_id, coalesce((j.spec->>'timeoutSeconds')::int, 0) as timeout_seconds, r.started_at
+		from runs r
+		join jobs j on j.job_id = r.job_id
+		where r.state in ('STARTING','RUNNING')
+		  and r.started_at is not null
+		  and coalesce((j.spec->>'timeoutSeconds')::int, 0) > 0
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]struct {
+		RunID          uuid.UUID
+		JobID          uuid.UUID
+		TimeoutSeconds int
+		StartedAt      *time.Time
+	}, 0)
+
+	for rows.Next() {
+		var r struct {
+			RunID          uuid.UUID
+			JobID          uuid.UUID
+			TimeoutSeconds int
+			StartedAt      *time.Time
+		}
+		if err := rows.Scan(&r.RunID, &r.JobID, &r.TimeoutSeconds, &r.StartedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/NasitSony/veriflow/internal/db"
 	"github.com/NasitSony/veriflow/internal/k8s"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -90,12 +91,47 @@ func main() {
 				return
 			case <-t.C:
 				runs, err := store.ListActiveRuns(ctx, 50)
+
+				if err != nil {
+					log.Printf("reconcile list runs error: %v", err)
+					continue
+				}
+
+				timedOutRuns, err := store.ListTimedOutRuns(ctx)
+				if err != nil {
+					log.Printf("list timed out runs error: %v", err)
+				}
+				timedOutMap := map[uuid.UUID]int{}
+				for _, tr := range timedOutRuns {
+					if tr.StartedAt != nil {
+						deadline := tr.StartedAt.Add(time.Duration(tr.TimeoutSeconds) * time.Second)
+						if time.Now().After(deadline) {
+							timedOutMap[tr.RunID] = tr.TimeoutSeconds
+						}
+					}
+				}
 				if err != nil {
 					log.Printf("reconcile list runs error: %v", err)
 					continue
 				}
 
 				for _, r := range runs {
+
+					//timedOutRuns, err := store.ListTimedOutRuns(ctx)
+
+					if timeoutSec, ok := timedOutMap[r.RunID]; ok {
+						log.Printf("run timeout job_id=%s run_id=%s timeout=%ds", r.JobID, r.RunID, timeoutSec)
+
+						_ = store.AddJobEvent(ctx, r.JobID, &r.RunID, "JOB_TIMEOUT", map[string]any{
+							"timeout_seconds": timeoutSec,
+						})
+
+						_ = store.MarkRunFailedOnly(ctx, r.RunID, "job_timeout")
+						_ = store.ScheduleRetryOrFail(ctx, r.JobID, r.RunID, "job_timeout")
+
+						continue
+					}
+
 					kjob, err := k8sClient.BatchV1().Jobs("default").Get(ctx, r.K8sJobName, metav1.GetOptions{})
 					if err != nil {
 						log.Printf("reconcile get job=%s err=%v", r.K8sJobName, err)
