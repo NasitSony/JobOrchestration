@@ -77,6 +77,17 @@ type Event struct {
 	CreatedAt time.Time
 }
 
+type SystemSummary struct {
+	TotalJobs            int `json:"totalJobs"`
+	PendingJobs          int `json:"pendingJobs"`
+	ScheduledJobs        int `json:"scheduledJobs"`
+	RunningJobs          int `json:"runningJobs"`
+	SucceededJobs        int `json:"succeededJobs"`
+	FailedJobs           int `json:"failedJobs"`
+	TotalRuns            int `json:"totalRuns"`
+	RetryTriggeredEvents int `json:"retryTriggeredEvents"`
+}
+
 var ErrNotFound = errors.New("not found")
 
 type Store struct {
@@ -380,4 +391,60 @@ func (s *Store) AddJobEvent(ctx context.Context, jobID uuid.UUID, runID *uuid.UU
 		values ($1,$2,$3::jsonb)
 	`, jobID, eventType, string(data))
 	return err
+}
+
+func (s *Store) GetSystemSummary(ctx context.Context) (SystemSummary, error) {
+	var out SystemSummary
+
+	err := s.pool.QueryRow(ctx, `
+		select
+			(select count(*) from jobs),
+			(select count(*) from jobs where state='PENDING'),
+			(select count(*) from jobs where state='SCHEDULED'),
+			(select count(*) from jobs where state='RUNNING'),
+			(select count(*) from jobs where state='SUCCEEDED'),
+			(select count(*) from jobs where state='FAILED'),
+			(select count(*) from runs),
+			(select count(*) from events where type='RETRY_TRIGGERED')
+	`).Scan(
+		&out.TotalJobs,
+		&out.PendingJobs,
+		&out.ScheduledJobs,
+		&out.RunningJobs,
+		&out.SucceededJobs,
+		&out.FailedJobs,
+		&out.TotalRuns,
+		&out.RetryTriggeredEvents,
+	)
+
+	return out, err
+}
+
+func (s *Store) ListRecentEvents(ctx context.Context, limit int) ([]Event, error) {
+	rows, err := s.pool.Query(ctx, `
+		select job_id, run_id, type, payload, created_at
+		from events
+		order by created_at desc
+		limit $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Event
+	for rows.Next() {
+		var e Event
+		if err := rows.Scan(
+			&e.JobID,
+			&e.RunID,
+			&e.Type,
+			&e.Payload,
+			&e.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }

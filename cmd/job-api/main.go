@@ -187,6 +187,30 @@ func main() {
 		})
 	})
 
+	mux.HandleFunc("/v1/system/summary", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeError(w, 405, "method_not_allowed", "Use GET")
+			return
+		}
+
+		summary, err := store.GetSystemSummary(r.Context())
+		if err != nil {
+			writeError(w, 500, "summary_error", err.Error())
+			return
+		}
+
+		events, err := store.ListRecentEvents(r.Context(), 20)
+		if err != nil {
+			writeError(w, 500, "recent_events_error", err.Error())
+			return
+		}
+
+		writeJSON(w, 200, map[string]any{
+			"summary":      summary,
+			"recentEvents": events,
+		})
+	})
+
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           logMiddleware(mux),
