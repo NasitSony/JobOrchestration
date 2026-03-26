@@ -448,3 +448,38 @@ func (s *Store) ListRecentEvents(ctx context.Context, limit int) ([]Event, error
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) GetActiveGPUUsageByNode(ctx context.Context) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, `
+		select
+			coalesce(e.payload->>'node', '') as node_name,
+			coalesce((e.payload->>'gpu_needed')::int, 0) as gpu_needed
+		from runs r
+		join lateral (
+			select payload
+			from events
+			where run_id = r.run_id
+			  and type = 'PLACEMENT_SELECTED'
+			order by created_at desc
+			limit 1
+		) e on true
+		where r.state in ('CREATED','STARTING','RUNNING')
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]int{}
+	for rows.Next() {
+		var node string
+		var used int
+		if err := rows.Scan(&node, &used); err != nil {
+			return nil, err
+		}
+		if node != "" {
+			out[node] += used
+		}
+	}
+	return out, rows.Err()
+}

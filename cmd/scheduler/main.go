@@ -151,34 +151,60 @@ func main() {
 			return
 		case <-ticker.C:
 
+			usageByNode, err := store.GetActiveGPUUsageByNode(ctx)
+			if err != nil {
+				log.Printf("gpu usage query error: %v", err)
+				continue
+			}
+
+			effectiveNodes := applyGPUUsage(nodes, usageByNode)
+
 			writeSchedulerStatus(statusPath, SchedulerStatus{
-				Queue:        queue,
-				Nodes:        nodes,
+				Queue:        strings.Join(queues, ","),
+				Nodes:        effectiveNodes,
 				LastUpdated:  time.Now().UTC(),
 				ActiveRuns:   0,
 				PendingClaim: true,
 			})
 
-			j, run, ok, err := store.ClaimNextPendingJob(ctx, queue)
-			if err != nil {
-				log.Printf("claim error: %v", err)
-				continue
+			var (
+				j   db.Job
+				run db.Run
+				ok  bool
+				err error
+			)
+
+			queueOrder := nextQueueOrder(queues, queueIdx)
+
+			for _, q := range queueOrder {
+				j, run, ok, err = store.ClaimNextPendingJob(ctx, q)
+				if err != nil {
+					log.Printf("claim error queue=%s: %v", q, err)
+					continue
+				}
+				if ok {
+					log.Printf("claimed job from queue=%s job_id=%s run_id=%s", q, j.JobID, run.RunID)
+					break
+				}
 			}
+
+			queueIdx = (queueIdx + 1) % len(queues)
+
 			if !ok {
 				continue
 			}
 
 			writeSchedulerStatus(statusPath, SchedulerStatus{
-				Queue:        queue,
-				Nodes:        nodes,
+				Queue:        strings.Join(queues, ","),
+				Nodes:        effectiveNodes,
 				LastUpdated:  time.Now().UTC(),
-				ActiveRuns:   1,
+				ActiveRuns:   0,
 				PendingClaim: false,
 			})
 
 			// 🔥 Day 3: GPU-aware fit check before dispatch
 			gpuNeeded := j.Spec.GPUCount
-			node, fit := pickNodeForJob(nodes, gpuNeeded)
+			node, fit := pickNodeForJob(effectiveNodes, gpuNeeded)
 			if !fit {
 				log.Printf(
 					"insufficient GPU capacity for job_id=%s run_id=%s need_gpu=%d",
@@ -272,6 +298,15 @@ func main() {
 				run.RunID.String(),
 			)
 
+			if err != nil {
+				log.Printf("k8s create error job_id=%s run_id=%s err=%v", j.JobID, run.RunID, err)
+				_ = store.AddJobEvent(ctx, j.JobID, &run.RunID, "DISPATCH_FAILED", map[string]any{
+					"k8s_job_name": jobName,
+					"error":        err.Error(),
+				})
+				continue
+			}
+
 			if err := store.MarkRunDispatched(ctx, run.RunID, jobName); err != nil {
 				log.Printf("mark dispatched error: %v", err)
 			}
@@ -281,7 +316,7 @@ func main() {
 			//continue
 			//}
 
-			_ = store.MarkRunDispatched(ctx, run.RunID, jobName)
+			//_ = store.MarkRunDispatched(ctx, run.RunID, jobName)
 
 			log.Printf("DISPATCHED job_id=%s run_id=%s k8s_job=%s",
 				j.JobID, run.RunID, jobName)
@@ -317,6 +352,22 @@ func parseQueues(raw string) []string {
 	}
 	if len(out) == 0 {
 		return []string{"default"}
+	}
+	return out
+}
+
+func applyGPUUsage(nodes []NodeCapacity, usage map[string]int) []NodeCapacity {
+	out := make([]NodeCapacity, len(nodes))
+	copy(out, nodes)
+
+	for i := range out {
+		out[i].UsedGPUs = usage[out[i].Name]
+		if out[i].UsedGPUs < 0 {
+			out[i].UsedGPUs = 0
+		}
+		if out[i].UsedGPUs > out[i].TotalGPUs {
+			out[i].UsedGPUs = out[i].TotalGPUs
+		}
 	}
 	return out
 }
