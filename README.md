@@ -7,8 +7,10 @@ It accepts jobs via an HTTP API, persists control-plane state in Postgres, sched
 
 The system focuses on the infrastructure layer behind AI workloads — scheduling, reliability, and observability — rather than model logic itself.
 
+This project demonstrates how AI workloads can be treated as distributed systems problems, where correctness, scheduling, and failure handling are first-class concerns.
 
-## Key features
+
+## Key Features
 
 - Idempotent job submission using Idempotency-Key  
 - Concurrency-safe job claiming with FOR UPDATE SKIP LOCKED  
@@ -20,6 +22,8 @@ The system focuses on the infrastructure layer behind AI workloads — schedulin
 - Kubernetes-based execution (batch/v1.Job)  
 
 ## 🚀 One-Command Demo
+
+This runs a full end-to-end workflow locally:
 
 Run a full end-to-end demo:
 
@@ -54,8 +58,10 @@ Postgres (jobs, runs, events)
   ▼
 scheduler (Go)  ───────────────► Kubernetes Job / Pod
 ```
+This design mirrors real-world AI infrastructure systems where control-plane state is decoupled from execution.
 
-## Job lifecycle
+
+## Job Lifecycle
 
 A successful job execution produces the following event sequence:
 
@@ -146,11 +152,11 @@ curl -s -X POST localhost:8080/v1/jobs \
 ```bash
 curl -s localhost:8080/v1/jobs/<job_id>
 ```
-
+All endpoints are JSON-based and designed for control-plane inspection.
 ---
 
 
-### Minimal API example
+## Minimal API Example
 
 Submit a job:
 
@@ -171,7 +177,7 @@ curl -X POST http://localhost:8080/v1/jobs \
 curl http://localhost:8080/v1/jobs/<job_id>
 ```
 
-## Retries + backoff
+## Retries + Backoff
 
 Veriflow stores retry timing in `jobs.next_run_at` and only claims jobs whose `next_run_at <= now()`.
 
@@ -190,7 +196,7 @@ Expected event shape:
 
 ---
 
-## Make targets
+## Make Targets
 
 - `make up` / `make down` / `make reset`
 - `make api` / `make sched`
@@ -204,15 +210,14 @@ See [RUNBOOK.md](RUNBOOK.md) for full operational steps.
 
 
 
-## What this project demonstrates
+## What This Project Demonstrates
 
 - Control-plane design for distributed systems  
 - Safe concurrent scheduling using database primitives  
 - Kubernetes-based workload orchestration  
 - Fault handling with retries, backoff, and timeouts  
 - Event-driven system observability  
-- AI infrastructure patterns (training-style job orchestration)  This project demonstrates:
-
+- AI infrastructure patterns (training-style job orchestration)  
 
 
 ---
