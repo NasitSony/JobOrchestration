@@ -1,8 +1,23 @@
-# Veriflow — Kubernetes Job Orchestrator (Control Plane + Scheduler)
+# Veriflow — Kubernetes-Based AI Workload Orchestrator
 
-Veriflow is a small, runnable **AI/ML infrastructure-style job platform**: a control-plane HTTP API + a scheduler that dispatches workloads as **Kubernetes Jobs**, then reconciles runtime status back into Postgres with an **auditable event timeline**.
 
-It’s intentionally minimal, but uses real production patterns: **idempotent submission**, **concurrency-safe claiming (SKIP LOCKED)**, **run attempts**, **retry backoff gating**, and **K8s reconciliation**.
+Veriflow is a Kubernetes-based AI workload orchestrator that implements a control-plane + scheduler architecture for running training-style jobs.
+
+It accepts jobs via an HTTP API, persists control-plane state in Postgres, schedules workloads using queue and priority semantics, dispatches execution as Kubernetes Jobs, and reconciles runtime state back into an auditable lifecycle timeline.
+
+The system focuses on the infrastructure layer behind AI workloads — scheduling, reliability, and observability — rather than model logic itself.
+
+
+## Key features
+
+- Idempotent job submission using Idempotency-Key  
+- Concurrency-safe job claiming with FOR UPDATE SKIP LOCKED  
+- Priority and queue-based scheduling  
+- GPU-aware placement decisions  
+- Retry with backoff using next_run_at  
+- Timeout handling for long-running jobs  
+- Event-sourced lifecycle tracking (jobs, runs, events)  
+- Kubernetes-based execution (batch/v1.Job)  
 
 ## 🚀 One-Command Demo
 
@@ -39,6 +54,20 @@ Postgres (jobs, runs, events)
   ▼
 scheduler (Go)  ───────────────► Kubernetes Job / Pod
 ```
+
+## Job lifecycle
+
+A successful job execution produces the following event sequence:
+
+- JOB_SUBMITTED  
+- JOB_SCHEDULED  
+- RUN_CREATED  
+- PLACEMENT_SELECTED  
+- DISPATCH_REQUESTED  
+- POD_RUNNING  
+- JOB_SUCCEEDED  
+
+These events are persisted in the `events` table and exposed via the API for full lifecycle visibility.
 
 **Key tables**
 - `jobs`: desired state, spec, priority, max retries, `next_run_at`
@@ -120,6 +149,28 @@ curl -s localhost:8080/v1/jobs/<job_id>
 
 ---
 
+
+### Minimal API example
+
+Submit a job:
+
+```bash
+curl -X POST http://localhost:8080/v1/jobs \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: test-1" \
+  -d '{
+    "image": "busybox",
+    "jobType": "training",
+    "gpuCount": 1,
+    "datasetUri": "s3://data/sample"
+  }'
+
+```
+
+```bash
+curl http://localhost:8080/v1/jobs/<job_id>
+```
+
 ## Retries + backoff
 
 Veriflow stores retry timing in `jobs.next_run_at` and only claims jobs whose `next_run_at <= now()`.
@@ -151,14 +202,18 @@ Expected event shape:
 ## 📘 Operations Guide
 See [RUNBOOK.md](RUNBOOK.md) for full operational steps.
 
-## Notes for hiring managers
 
-This project demonstrates:
-- **Control-plane design:** HTTP API + DB-backed state machine
-- **Safe concurrency:** `FOR UPDATE SKIP LOCKED` claiming
-- **Kubernetes execution:** workloads run as `batch/v1.Job`
-- **Reconciliation loop:** K8s status → persisted lifecycle
-- **Auditability:** append-only event timeline
+
+## What this project demonstrates
+
+- Control-plane design for distributed systems  
+- Safe concurrent scheduling using database primitives  
+- Kubernetes-based workload orchestration  
+- Fault handling with retries, backoff, and timeouts  
+- Event-driven system observability  
+- AI infrastructure patterns (training-style job orchestration)  This project demonstrates:
+
+
 
 ---
 
