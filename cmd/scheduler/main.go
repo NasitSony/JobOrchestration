@@ -344,6 +344,19 @@ func main() {
 				"job_type":     j.Spec.JobType,
 			})
 
+			alreadyDispatched, existingJobName, err := store.RunAlreadyDispatched(ctx, run.RunID)
+			if err != nil {
+				log.Printf("dispatch check error job_id=%s run_id=%s err=%v", j.JobID, run.RunID, err)
+				continue
+			}
+			if alreadyDispatched {
+				log.Printf("run already dispatched job_id=%s run_id=%s k8s_job=%s", j.JobID, run.RunID, existingJobName)
+				_ = store.AddJobEvent(ctx, j.JobID, &run.RunID, "DISPATCH_SKIPPED_ALREADY_EXISTS", map[string]any{
+					"k8s_job_name": existingJobName,
+				})
+				continue
+			}
+
 			err = k8s.CreateJob(
 				k8sClient,
 				"default",

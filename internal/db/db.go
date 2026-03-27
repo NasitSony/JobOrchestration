@@ -568,3 +568,19 @@ func (s *Store) ListHeartbeatStaleRuns(ctx context.Context, staleAfter time.Dura
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) RunAlreadyDispatched(ctx context.Context, runID uuid.UUID) (bool, string, error) {
+	var k8sJobName *string
+	err := s.pool.QueryRow(ctx, `
+		select k8s_job_name
+		from runs
+		where run_id=$1
+	`, runID).Scan(&k8sJobName)
+	if err != nil {
+		return false, "", err
+	}
+	if k8sJobName != nil && *k8sJobName != "" {
+		return true, *k8sJobName, nil
+	}
+	return false, "", nil
+}
