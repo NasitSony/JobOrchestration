@@ -13,6 +13,7 @@ import (
 
 	"github.com/NasitSony/veriflow/internal/db"
 	"github.com/NasitSony/veriflow/internal/k8s"
+	runtimestatus "github.com/NasitSony/veriflow/internal/runtime"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -151,6 +152,104 @@ func main() {
 						_ = store.ScheduleRetryOrFail(ctx, r.JobID, r.RunID, "heartbeat_stale")
 
 						continue
+					}
+
+					statusFile := fmt.Sprintf("/tmp/veriflow-status/%s.json", r.RunID.String())
+
+					rs, err := runtimestatus.ReadRunStatus(statusFile)
+					if err != nil {
+						// Missing status file is normal early in execution.
+						// Malformed or unreadable status should not break reconciliation.
+						if !os.IsNotExist(err) {
+							log.Printf("read run status job_id=%s run_id=%s path=%s err=%v", r.JobID, r.RunID, statusFile, err)
+						}
+					} else {
+						// Optional sanity checks
+						if rs.RunID != "" && rs.RunID != r.RunID.String() {
+							log.Printf("status run_id mismatch job_id=%s expected=%s got=%s", r.JobID, r.RunID, rs.RunID)
+						} else {
+							switch rs.JobType {
+							case "training":
+								if rs.Training != nil {
+									_ = store.AddJobEvent(ctx, r.JobID, &r.RunID, "TRAINING_PROGRESS", map[string]any{
+										"phase":      rs.Phase,
+										"epoch":      rs.Training.Epoch,
+										"step":       rs.Training.Step,
+										"loss":       rs.Training.Loss,
+										"accuracy":   rs.Training.Accuracy,
+										"updated_at": rs.UpdatedAt,
+										"message":    rs.Message,
+									})
+
+									if rs.Training.CheckpointPath != "" {
+										_ = store.AddJobEvent(ctx, r.JobID, &r.RunID, "CHECKPOINT_SAVED", map[string]any{
+											"phase":           rs.Phase,
+											"checkpoint_path": rs.Training.CheckpointPath,
+											"epoch":           rs.Training.Epoch,
+											"step":            rs.Training.Step,
+											"updated_at":      rs.UpdatedAt,
+										})
+									}
+
+									if rs.Training.ArtifactPath != "" {
+										_ = store.AddJobEvent(ctx, r.JobID, &r.RunID, "ARTIFACT_WRITTEN", map[string]any{
+											"phase":         rs.Phase,
+											"artifact_path": rs.Training.ArtifactPath,
+											"epoch":         rs.Training.Epoch,
+											"step":          rs.Training.Step,
+											"updated_at":    rs.UpdatedAt,
+										})
+									}
+								}
+
+							case "batch-inference":
+								if rs.Inference != nil {
+									_ = store.AddJobEvent(ctx, r.JobID, &r.RunID, "INFERENCE_PROGRESS", map[string]any{
+										"phase":             rs.Phase,
+										"processed_batches": rs.Inference.ProcessedBatches,
+										"latency_ms":        rs.Inference.LatencyMs,
+										"updated_at":        rs.UpdatedAt,
+										"message":           rs.Message,
+									})
+
+									if rs.Inference.ResultsPath != "" {
+										_ = store.AddJobEvent(ctx, r.JobID, &r.RunID, "RESULTS_WRITTEN", map[string]any{
+											"phase":        rs.Phase,
+											"results_path": rs.Inference.ResultsPath,
+											"updated_at":   rs.UpdatedAt,
+										})
+									}
+
+									if rs.Inference.ArtifactPath != "" {
+										_ = store.AddJobEvent(ctx, r.JobID, &r.RunID, "ARTIFACT_WRITTEN", map[string]any{
+											"phase":         rs.Phase,
+											"artifact_path": rs.Inference.ArtifactPath,
+											"updated_at":    rs.UpdatedAt,
+										})
+									}
+								}
+
+							case "evaluation":
+								if rs.Evaluation != nil {
+									_ = store.AddJobEvent(ctx, r.JobID, &r.RunID, "EVALUATION_PROGRESS", map[string]any{
+										"phase":      rs.Phase,
+										"step":       rs.Evaluation.Step,
+										"loss":       rs.Evaluation.Loss,
+										"accuracy":   rs.Evaluation.Accuracy,
+										"updated_at": rs.UpdatedAt,
+										"message":    rs.Message,
+									})
+
+									if rs.Evaluation.ResultsPath != "" {
+										_ = store.AddJobEvent(ctx, r.JobID, &r.RunID, "RESULTS_WRITTEN", map[string]any{
+											"phase":        rs.Phase,
+											"results_path": rs.Evaluation.ResultsPath,
+											"updated_at":   rs.UpdatedAt,
+										})
+									}
+								}
+							}
+						}
 					}
 
 					kjob, err := k8sClient.BatchV1().Jobs("default").Get(ctx, r.K8sJobName, metav1.GetOptions{})
@@ -303,19 +402,102 @@ func main() {
 
 			command := j.Spec.Command
 
-			if j.Spec.JobType == "training" && len(command) == 0 {
+			if j.Spec.JobType == "training" {
 				command = []string{
 					"/bin/sh",
 					"-c",
-					"echo starting training job; " +
-						"if [ -n \"$CHECKPOINT_URI\" ]; then echo resuming from checkpoint=$CHECKPOINT_URI; else echo no checkpoint provided; fi; " +
-						"echo dataset=$DATASET_URI; " +
-						"echo epoch=1 loss=0.84 accuracy=0.71; sleep 2; " +
-						"echo epoch=2 loss=0.61 accuracy=0.79; sleep 2; " +
-						"echo checkpoint saved path=/artifacts/ckpt-2; sleep 2; " +
-						"if [ -n \"$ARTIFACT_URI\" ]; then echo writing artifact to=$ARTIFACT_URI; else echo no artifact output configured; fi; " +
-						"echo epoch=3 loss=0.43 accuracy=0.86; sleep 2; " +
-						"echo training complete",
+					`
+echo "starting training job"
+if [ -n "$CHECKPOINT_URI" ]; then
+  echo "resuming from checkpoint=$CHECKPOINT_URI"
+else
+  echo "no checkpoint provided"
+fi
+echo "dataset=$DATASET_URI"
+
+mkdir -p "$(dirname "$STATUS_PATH")"
+mkdir -p /artifacts
+
+cat <<EOF > "$STATUS_PATH"
+{
+  "runId": "$RUN_ID",
+  "jobType": "training",
+  "phase": "running",
+  "updatedAt": "2026-03-28T16:10:00Z",
+  "message": "training started",
+  "training": {
+    "epoch": 1,
+    "step": 100,
+    "loss": 0.84,
+    "accuracy": 0.71
+  }
+}
+EOF
+
+echo "wrote training status epoch=1"
+sleep 2
+
+cat <<EOF > "$STATUS_PATH"
+{
+  "runId": "$RUN_ID",
+  "jobType": "training",
+  "phase": "running",
+  "updatedAt": "2026-03-28T16:11:00Z",
+  "message": "training progressing",
+  "training": {
+    "epoch": 2,
+    "step": 200,
+    "loss": 0.61,
+    "accuracy": 0.79,
+    "checkpointPath": "/artifacts/ckpt-2"
+  }
+}
+EOF
+
+echo "wrote training status epoch=2 checkpoint=/artifacts/ckpt-2"
+sleep 2
+
+cat <<EOF > "$STATUS_PATH"
+{
+  "runId": "$RUN_ID",
+  "jobType": "training",
+  "phase": "running",
+  "updatedAt": "2026-03-28T16:12:00Z",
+  "message": "artifact written",
+  "training": {
+    "epoch": 3,
+    "step": 300,
+    "loss": 0.43,
+    "accuracy": 0.86,
+    "checkpointPath": "/artifacts/ckpt-2",
+    "artifactPath": "/artifacts/model-final"
+  }
+}
+EOF
+
+echo "wrote training status epoch=3 artifact=/artifacts/model-final"
+sleep 2
+
+cat <<EOF > "$STATUS_PATH"
+{
+  "runId": "$RUN_ID",
+  "jobType": "training",
+  "phase": "succeeded",
+  "updatedAt": "2026-03-28T16:13:00Z",
+  "message": "training complete",
+  "training": {
+    "epoch": 3,
+    "step": 300,
+    "loss": 0.43,
+    "accuracy": 0.86,
+    "checkpointPath": "/artifacts/ckpt-2",
+    "artifactPath": "/artifacts/model-final"
+  }
+}
+EOF
+
+echo "training complete"
+`,
 				}
 			}
 
@@ -361,6 +543,8 @@ func main() {
 				"DATASET_URI":    j.Spec.DatasetURI,
 				"CHECKPOINT_URI": j.Spec.CheckpointURI,
 				"ARTIFACT_URI":   j.Spec.ArtifactURI,
+				"RUN_ID":         run.RunID.String(),
+				"STATUS_PATH":    fmt.Sprintf("/status/%s.json", run.RunID.String()),
 			}
 
 			_ = store.AddJobEvent(ctx, j.JobID, &run.RunID, "DISPATCH_REQUESTED", map[string]any{
