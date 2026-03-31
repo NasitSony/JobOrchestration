@@ -54,6 +54,30 @@ This mirrors real-world AI infra where:
 - control plane = state + scheduling
 - data plane = execution (K8s jobs)
 
+## 🔄 Runtime-Aware Lifecycle
+
+A training job now produces:
+
+```
+JOB_SUBMITTED
+JOB_SCHEDULED
+RUN_CREATED
+PLACEMENT_SELECTED
+DISPATCH_REQUESTED
+POD_RUNNING
+
+TRAINING_PROGRESS
+CHECKPOINT_SAVED
+
+RUN_FAILED
+RETRY_TRIGGERED
+RUN_CREATED (attempt 2)
+TRAINING_RESUMED
+
+...
+JOB_SUCCEEDED
+```
+
 ## 🚀 One-Command Demo
 
 This runs a full end-to-end workflow locally:
