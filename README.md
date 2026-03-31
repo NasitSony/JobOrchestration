@@ -20,13 +20,13 @@ Veriflow models:
 ## ⚡ Key Features
 
 - Idempotent job submission (```text Idempotency-Key ```)
-- Concurrency-safe job claiming (FOR UPDATE SKIP LOCKED)
+- Concurrency-safe job claiming (```text FOR UPDATE SKIP LOCKED ```)
 - Queue + priority-based scheduling
 - GPU-aware placement decisions
-- Retry with backoff (next_run_at)
+- Retry with backoff (```text next_run_at ```)
 - Timeout handling for long-running jobs
 - Event-sourced lifecycle tracking (jobs, runs, events)
-- Kubernetes-based execution (batch/v1.Job)
+- Kubernetes-based execution (```text batch/v1.Job ```)
 - **Runtime-aware reconciliation (training progress, checkpoints)**
 - **Checkpoint-aware retry and resume**
 
