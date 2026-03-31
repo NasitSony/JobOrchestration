@@ -123,6 +123,50 @@ For retry-enabled jobs:
 
 Veriflow resumes failed training runs from the latest checkpoint instead of restarting from scratch.
 
+### 4. Failure Storm Behavior
+- Multiple jobs failed concurrently
+- Scheduler:
+  - continued processing
+  - emitted consistent events
+  - avoided duplicate claims
+
+System remains consistent under failure bursts.
+
+## 📊 Event Summary (example run)
+- 40+ RUN_CREATED
+- 30+ CHECKPOINT_SAVED
+- 20+ RUN_FAILED
+- successful retry + resume observed
+
+
+## 🧬 Evolution
+
+### v0.1 — Job API
+- basic job submission
+- Postgres persistence
+
+### v0.2 — Scheduler + State Machine
+- job claiming
+- run lifecycle
+
+### v0.3 — Kubernetes Execution
+- dispatch as K8s Jobs
+- reconcile job state
+
+### v0.4 — Retry + Backoff
+- next_run_at
+- multi-attempt runs
+
+### v0.5 — Observability
+- event-sourced lifecycle
+- logs + status tracking
+
+### v0.6 — Runtime-Aware AI Infrastructure 🚀
+- runtime status ingestion
+- training progress tracking
+- checkpoint persistence
+- checkpoint-aware retry + resume
+
 ## 🚀 One-Command Demo
 
 This runs a full end-to-end workflow locally:
