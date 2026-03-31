@@ -49,6 +49,11 @@ Postgres (jobs, runs, events)
 scheduler (Go) ───────────► Kubernetes Job / Pod
 ```
 
+This mirrors real-world AI infra where:
+
+- control plane = state + scheduling
+- data plane = execution (K8s jobs)
+
 ## 🚀 One-Command Demo
 
 This runs a full end-to-end workflow locally:
