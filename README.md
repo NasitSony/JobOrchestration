@@ -81,7 +81,20 @@ JOB_SUCCEEDED
 
 ## 🧪 Evaluation
 
-### 1. Burst Submission Handling
+### 1. Multi-Scheduler Validation
+
+Veriflow was tested with two concurrent scheduler instances (`sched-a`, `sched-b`) operating on the same Postgres-backed queue.
+
+- Dispatch distribution:
+  - sched-a: 3 dispatches
+  - sched-b: 3 dispatches
+- No duplicate dispatch of the same run observed
+
+This demonstrates that `FOR UPDATE SKIP LOCKED` enables safe concurrent job claiming without duplicate execution, while allowing multiple schedulers to share work.
+
+---
+
+### 2. Burst Submission Handling
 - Submitted **20 concurrent jobs**
 - Scheduler continued:
   - claiming jobs
@@ -91,7 +104,7 @@ JOB_SUCCEEDED
 
 Veriflow maintains stable control-plane behavior under burst submission.
 
-### 2. Runtime-Aware Failure Handling
+### 3. Runtime-Aware Failure Handling
 - Jobs emit:
   - ```TRAINING_PROGRESS```
   - ```CHECKPOINT_SAVED```
@@ -101,7 +114,7 @@ Veriflow maintains stable control-plane behavior under burst submission.
 ``` RUN_FAILED → (retry OR terminal failure) ```
 
 
-### 3. Checkpoint-Aware Retry & Resume
+### 4. Checkpoint-Aware Retry & Resume
 
 For retry-enabled jobs:
 
