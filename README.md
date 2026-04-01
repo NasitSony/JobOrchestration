@@ -180,6 +180,13 @@ System remains consistent under failure bursts.
 - checkpoint persistence
 - checkpoint-aware retry + resume
 
+### v0.7 — Constraint-Aware GPU Placement
+- extended job spec with `gpuType` and `minGpuMemoryMb`
+- added node GPU capacity metadata (`gpuType`, per-GPU memory)
+- implemented constraint-aware placement checks for count, type, and memory
+- upgraded scheduler from first-fit to best-fit GPU placement
+- added explicit placement defer reasons (`gpu_type_mismatch`, `insufficient_gpu_memory`, `insufficient_gpu_capacity`)
+
 ## 🚀 One-Command Demo
 
 This runs a full end-to-end workflow locally:
