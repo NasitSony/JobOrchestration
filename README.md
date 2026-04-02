@@ -207,6 +207,14 @@ Example:
   "minGpuMemoryMb": 30000
 }```
 
+### v0.8 — Fairness and Quota-Aware Scheduling
+- added rotating queue order for fairer multi-queue scheduling
+- enforced queue-level GPU quotas
+- deferred over-quota jobs with explicit `queue_gpu_quota_exceeded` reason
+- preserved device-level best-fit GPU placement and explicit constraint failure reasons
+
+
+
 ## 🚀 One-Command Demo
 
 This runs a full end-to-end workflow locally:
