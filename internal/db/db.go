@@ -577,3 +577,26 @@ func (s *Store) UpdateLatestCheckpointURI(ctx context.Context, jobID uuid.UUID, 
 	`, jobID, checkpointURI)
 	return err
 }
+func (s *Store) CurrentGPUUsageByQueue(ctx context.Context) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, `
+		select queue, coalesce(sum((spec->>'gpuCount')::int), 0)
+		from jobs
+		where state in ('SCHEDULED', 'RUNNING')
+		group by queue
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]int{}
+	for rows.Next() {
+		var queue string
+		var used int
+		if err := rows.Scan(&queue, &used); err != nil {
+			return nil, err
+		}
+		out[queue] = used
+	}
+	return out, rows.Err()
+}

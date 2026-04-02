@@ -41,6 +41,12 @@ func (n NodeCapacity) FreeGPUs() int {
 	return count
 }
 
+var queueGPUQuota = map[string]int{
+	"default":  4,
+	"research": 2,
+	"batch":    1,
+}
+
 func countMatchingFreeGPUs(node NodeCapacity, spec db.JobSpec) int {
 	count := 0
 	for _, g := range node.GPUs {
@@ -615,6 +621,39 @@ func main() {
 				PendingClaim: false,
 			})
 
+			usageByQueue, err := store.CurrentGPUUsageByQueue(ctx)
+			if err != nil {
+				log.Printf("gpu usage by queue error: %v", err)
+				continue
+			}
+
+			queueQuota := queueQuotaFor(j.Spec.Queue)
+			queueUsed := usageByQueue[j.Spec.Queue]
+
+			if queueUsed+j.Spec.GPUCount > queueQuota {
+				log.Printf(
+					"quota deferred job_id=%s run_id=%s queue=%s used_gpu=%d request_gpu=%d quota_gpu=%d",
+					j.JobID,
+					run.RunID,
+					j.Spec.Queue,
+					queueUsed,
+					j.Spec.GPUCount,
+					queueQuota,
+				)
+
+				_ = store.AddJobEvent(ctx, j.JobID, &run.RunID, "PLACEMENT_DEFERRED", map[string]any{
+					"reason":           "queue_gpu_quota_exceeded",
+					"queue":            j.Spec.Queue,
+					"queue_gpu_used":   queueUsed,
+					"queue_gpu_quota":  queueQuota,
+					"gpu_needed":       j.Spec.GPUCount,
+					"scheduler_id":     schedulerID,
+					"placement_policy": "best_fit_gpu_devices",
+				})
+
+				continue
+			}
+
 			gpuNeeded := j.Spec.GPUCount
 
 			var selected *NodeCapacity
@@ -1068,6 +1107,13 @@ func nextQueueOrder(queues []string, start int) []string {
 		out = append(out, queues[idx])
 	}
 	return out
+}
+
+func queueQuotaFor(queue string) int {
+	if q, ok := queueGPUQuota[queue]; ok {
+		return q
+	}
+	return 1 << 30 // effectively no quota
 }
 
 func floatPtrEqual(a, b *float64) bool {
