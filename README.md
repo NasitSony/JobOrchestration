@@ -205,7 +205,8 @@ Example:
   "gpuCount": 2,
   "gpuType": "A100",
   "minGpuMemoryMb": 30000
-}```
+}
+```
 
 ### v0.8 — Fairness and Quota-Aware Scheduling
 - added rotating queue order for fairer multi-queue scheduling
