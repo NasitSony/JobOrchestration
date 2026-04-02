@@ -186,12 +186,26 @@ System remains consistent under failure bursts.
 - checkpoint persistence
 - checkpoint-aware retry + resume
 
-### v0.7 — Constraint-Aware GPU Placement
-- extended job spec with `gpuType` and `minGpuMemoryMb`
-- added node GPU capacity metadata (`gpuType`, per-GPU memory)
-- implemented constraint-aware placement checks for count, type, and memory
-- upgraded scheduler from first-fit to best-fit GPU placement
-- added explicit placement defer reasons (`gpu_type_mismatch`, `insufficient_gpu_memory`, `insufficient_gpu_capacity`)
+###  v0.7 - GPU-Aware Scheduling 🚀
+
+Veriflow implements constraint-based GPU scheduling with device-level resource accounting and explainable placement decisions.
+
+#### Job-Level GPU Constraints
+
+Jobs can specify GPU requirements via the API:
+
+- `gpuCount` — number of GPUs required
+- `gpuType` (optional) — exact GPU type (e.g., A100, L4)
+- `minGpuMemoryMb` (optional) — minimum per-GPU memory requirement
+
+Example:
+
+```json
+{
+  "gpuCount": 2,
+  "gpuType": "A100",
+  "minGpuMemoryMb": 30000
+}
 
 ## 🚀 One-Command Demo
 
