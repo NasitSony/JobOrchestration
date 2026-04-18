@@ -40,12 +40,14 @@ type JobSpec struct {
 	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
 
 	// 🔥 NEW AI FIELDS
-	JobType       string `json:"jobType,omitempty"`  // training | batch-inference
-	GPUCount      int    `json:"gpuCount,omitempty"` // number of GPUs
-	DatasetURI    string `json:"datasetUri,omitempty"`
-	CheckpointURI string `json:"checkpointUri,omitempty"`
-	ArtifactURI   string `json:"artifactUri,omitempty"`
-	Framework     string `json:"framework,omitempty"` // pytorch | custom
+	JobType        string `json:"jobType,omitempty"`  // training | batch-inference
+	GPUCount       int    `json:"gpuCount,omitempty"` // number of GPUs
+	DatasetURI     string `json:"datasetUri,omitempty"`
+	CheckpointURI  string `json:"checkpointUri,omitempty"`
+	ArtifactURI    string `json:"artifactUri,omitempty"`
+	Framework      string `json:"framework,omitempty"` // pytorch | custom
+	GPUType        string `json:"gpuType,omitempty"`
+	MinGPUMemoryMB int    `json:"minGpuMemoryMb,omitempty"`
 }
 
 type Job struct {
@@ -574,4 +576,27 @@ func (s *Store) UpdateLatestCheckpointURI(ctx context.Context, jobID uuid.UUID, 
 		WHERE job_id = $1
 	`, jobID, checkpointURI)
 	return err
+}
+func (s *Store) CurrentGPUUsageByQueue(ctx context.Context) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, `
+		select queue, coalesce(sum((spec->>'gpuCount')::int), 0)
+		from jobs
+		where state in ('SCHEDULED', 'RUNNING')
+		group by queue
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]int{}
+	for rows.Next() {
+		var queue string
+		var used int
+		if err := rows.Scan(&queue, &used); err != nil {
+			return nil, err
+		}
+		out[queue] = used
+	}
+	return out, rows.Err()
 }

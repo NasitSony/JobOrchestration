@@ -19,14 +19,105 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type GPUDevice struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	MemoryMB  int    `json:"memoryMb"`
+	Allocated bool   `json:"allocated"`
+}
+
 type NodeCapacity struct {
-	Name      string `json:"name"`
-	TotalGPUs int    `json:"totalGPUs"`
-	UsedGPUs  int    `json:"usedGPUs"`
+	Name string      `json:"name"`
+	GPUs []GPUDevice `json:"gpus"`
 }
 
 func (n NodeCapacity) FreeGPUs() int {
-	return n.TotalGPUs - n.UsedGPUs
+	count := 0
+	for _, g := range n.GPUs {
+		if !g.Allocated {
+			count++
+		}
+	}
+	return count
+}
+
+var queueGPUQuota = map[string]int{
+	"default":  4,
+	"research": 2,
+	"batch":    1,
+}
+
+func countMatchingFreeGPUs(node NodeCapacity, spec db.JobSpec) int {
+	count := 0
+	for _, g := range node.GPUs {
+		if g.Allocated {
+			continue
+		}
+		if spec.GPUType != "" && g.Type != spec.GPUType {
+			continue
+		}
+		if spec.MinGPUMemoryMB > 0 && g.MemoryMB < spec.MinGPUMemoryMB {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+func nodeFitsGPU(node NodeCapacity, spec db.JobSpec) (bool, string) {
+	matching := countMatchingFreeGPUs(node, spec)
+
+	if matching < spec.GPUCount {
+		// decide more specific reason
+		typeMismatch := true
+		memMismatch := true
+
+		for _, g := range node.GPUs {
+			if g.Allocated {
+				continue
+			}
+			if spec.GPUType == "" || g.Type == spec.GPUType {
+				typeMismatch = false
+			}
+			if spec.MinGPUMemoryMB == 0 || g.MemoryMB >= spec.MinGPUMemoryMB {
+				memMismatch = false
+			}
+		}
+
+		if spec.GPUType != "" && typeMismatch {
+			return false, "gpu_type_mismatch"
+		}
+		if spec.MinGPUMemoryMB > 0 && memMismatch {
+			return false, "insufficient_gpu_memory"
+		}
+		return false, "gang_unsatisfied"
+	}
+
+	return true, ""
+}
+
+func selectGPUDevices(node NodeCapacity, spec db.JobSpec) ([]GPUDevice, bool) {
+	candidates := make([]GPUDevice, 0)
+
+	for _, g := range node.GPUs {
+		if g.Allocated {
+			continue
+		}
+		if spec.GPUType != "" && g.Type != spec.GPUType {
+			continue
+		}
+		if spec.MinGPUMemoryMB > 0 && g.MemoryMB < spec.MinGPUMemoryMB {
+			continue
+		}
+		candidates = append(candidates, g)
+	}
+
+	if len(candidates) < spec.GPUCount {
+		return nil, false
+	}
+
+	// Simple deterministic choice: take first N matching free GPUs
+	return candidates[:spec.GPUCount], true
 }
 
 type SchedulerStatus struct {
@@ -72,6 +163,8 @@ func main() {
 	heartbeatStaleAfter := envOrDuration("HEARTBEAT_STALE_AFTER", 15*time.Second)
 
 	statusPath := envOr("SCHED_STATUS_PATH", "/tmp/veriflow-scheduler-status.json")
+
+	schedulerID := envOr("SCHEDULER_ID", "sched-unknown")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -425,9 +518,21 @@ func main() {
 	}()
 
 	// 🔥 Day 3: basic GPU inventory
-	nodes := []NodeCapacity{
-		{Name: "gpu-node-a", TotalGPUs: 2, UsedGPUs: 0},
-		{Name: "gpu-node-b", TotalGPUs: 4, UsedGPUs: 0},
+	/*nodes := []NodeCapacity{
+		{
+			Name:           "gpu-node-a",
+			GPUType:        "A100",
+			TotalGPUs:      4,
+			UsedGPUs:       0,
+			MemoryPerGPUmb: 40000,
+		},
+		{
+			Name:           "gpu-node-b",
+			GPUType:        "L4",
+			TotalGPUs:      2,
+			UsedGPUs:       0,
+			MemoryPerGPUmb: 24000,
+		},
 	}
 
 	writeSchedulerStatus(statusPath, SchedulerStatus{
@@ -435,7 +540,7 @@ func main() {
 		Nodes:       nodes,
 		LastUpdated: time.Now().UTC(),
 		ActiveRuns:  0,
-	})
+	})*/
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -449,13 +554,30 @@ func main() {
 			return
 		case <-ticker.C:
 
-			usageByNode, err := store.GetActiveGPUUsageByNode(ctx)
+			/*usageByNode, err := store.GetActiveGPUUsageByNode(ctx)
 			if err != nil {
 				log.Printf("gpu usage query error: %v", err)
 				continue
-			}
+			}*/
 
-			effectiveNodes := applyGPUUsage(nodes, usageByNode)
+			effectiveNodes := []NodeCapacity{
+				{
+					Name: "gpu-node-a",
+					GPUs: []GPUDevice{
+						{ID: "gpu0", Type: "A100", MemoryMB: 40000, Allocated: false},
+						{ID: "gpu1", Type: "A100", MemoryMB: 40000, Allocated: false},
+						{ID: "gpu2", Type: "A100", MemoryMB: 40000, Allocated: false},
+						{ID: "gpu3", Type: "A100", MemoryMB: 40000, Allocated: false},
+					},
+				},
+				{
+					Name: "gpu-node-b",
+					GPUs: []GPUDevice{
+						{ID: "gpu0", Type: "L4", MemoryMB: 24000, Allocated: false},
+						{ID: "gpu1", Type: "L4", MemoryMB: 24000, Allocated: false},
+					},
+				},
+			}
 
 			writeSchedulerStatus(statusPath, SchedulerStatus{
 				Queue:        strings.Join(queues, ","),
@@ -480,7 +602,7 @@ func main() {
 					continue
 				}
 				if ok {
-					log.Printf("claimed job from queue=%s job_id=%s run_id=%s", q, j.JobID, run.RunID)
+					log.Printf("[%s] claimed job from queue=%s job_id=%s run_id=%s", schedulerID, q, j.JobID, run.RunID)
 					break
 				}
 			}
@@ -499,49 +621,206 @@ func main() {
 				PendingClaim: false,
 			})
 
-			// 🔥 Day 3: GPU-aware fit check before dispatch
-			gpuNeeded := j.Spec.GPUCount
-			node, fit := pickNodeForJob(effectiveNodes, gpuNeeded)
-			if !fit {
+			usageByQueue, err := store.CurrentGPUUsageByQueue(ctx)
+			if err != nil {
+				log.Printf("gpu usage by queue error: %v", err)
+				continue
+			}
+
+			queueQuota := queueQuotaFor(j.Spec.Queue)
+			queueUsed := usageByQueue[j.Spec.Queue]
+
+			if queueUsed+j.Spec.GPUCount > queueQuota {
 				log.Printf(
-					"insufficient GPU capacity for job_id=%s run_id=%s need_gpu=%d",
+					"quota deferred job_id=%s run_id=%s queue=%s used_gpu=%d request_gpu=%d quota_gpu=%d",
 					j.JobID,
 					run.RunID,
-					gpuNeeded,
+					j.Spec.Queue,
+					queueUsed,
+					j.Spec.GPUCount,
+					queueQuota,
 				)
 
 				_ = store.AddJobEvent(ctx, j.JobID, &run.RunID, "PLACEMENT_DEFERRED", map[string]any{
-					"reason":     "insufficient_gpu_capacity",
-					"gpu_needed": gpuNeeded,
-					"job_type":   j.Spec.JobType,
-					"queue":      j.Spec.Queue,
+					"reason":           "queue_gpu_quota_exceeded",
+					"queue":            j.Spec.Queue,
+					"queue_gpu_used":   queueUsed,
+					"queue_gpu_quota":  queueQuota,
+					"gpu_needed":       j.Spec.GPUCount,
+					"scheduler_id":     schedulerID,
+					"placement_policy": "best_fit_gpu_devices",
 				})
 
 				continue
 			}
 
+			gpuNeeded := j.Spec.GPUCount
+
+			var selected *NodeCapacity
+			var rejectReason string
+
+			bestPostFree := int(^uint(0) >> 1) // max int
+			bestMemoryHeadroom := int(^uint(0) >> 1)
+
+			for i := range effectiveNodes {
+				fits, reason := nodeFitsGPU(effectiveNodes[i], j.Spec)
+				if !fits {
+					log.Printf(
+						"node rejected job_id=%s run_id=%s node=%s reason=%s gpu_needed=%d req_gpu_type=%s min_gpu_memory_mb=%d",
+						j.JobID,
+						run.RunID,
+						effectiveNodes[i].Name,
+						reason,
+						gpuNeeded,
+						j.Spec.GPUType,
+						j.Spec.MinGPUMemoryMB,
+					)
+					rejectReason = reason
+					continue
+				}
+
+				postFree := effectiveNodes[i].FreeGPUs() - gpuNeeded
+
+				memoryHeadroom := 0
+				if j.Spec.MinGPUMemoryMB > 0 && len(effectiveNodes[i].GPUs) > 0 {
+					// use smallest matching headroom as tie-break
+					minHeadroom := int(^uint(0) >> 1)
+					for _, g := range effectiveNodes[i].GPUs {
+						if g.Allocated {
+							continue
+						}
+						if j.Spec.GPUType != "" && g.Type != j.Spec.GPUType {
+							continue
+						}
+						if j.Spec.MinGPUMemoryMB > 0 && g.MemoryMB < j.Spec.MinGPUMemoryMB {
+							continue
+						}
+						headroom := g.MemoryMB - j.Spec.MinGPUMemoryMB
+						if headroom < minHeadroom {
+							minHeadroom = headroom
+						}
+					}
+					if minHeadroom != int(^uint(0)>>1) {
+						memoryHeadroom = minHeadroom
+					}
+				}
+
+				log.Printf(
+					"node candidate job_id=%s run_id=%s node=%s post_free_gpu=%d memory_headroom_mb=%d",
+					j.JobID,
+					run.RunID,
+					effectiveNodes[i].Name,
+					postFree,
+					memoryHeadroom,
+				)
+
+				if selected == nil ||
+					postFree < bestPostFree ||
+					(postFree == bestPostFree && memoryHeadroom < bestMemoryHeadroom) {
+
+					selected = &effectiveNodes[i]
+					bestPostFree = postFree
+					bestMemoryHeadroom = memoryHeadroom
+				}
+			}
+
+			if selected == nil {
+				log.Printf(
+					"placement deferred job_id=%s run_id=%s reason=%s gpu_needed=%d gpu_type=%s min_gpu_memory_mb=%d",
+					j.JobID,
+					run.RunID,
+					rejectReason,
+					gpuNeeded,
+					j.Spec.GPUType,
+					j.Spec.MinGPUMemoryMB,
+				)
+
+				_ = store.AddJobEvent(ctx, j.JobID, &run.RunID, "PLACEMENT_DEFERRED", map[string]any{
+					"reason":            rejectReason,
+					"gpu_needed":        gpuNeeded,
+					"gpu_type":          j.Spec.GPUType,
+					"min_gpu_memory_mb": j.Spec.MinGPUMemoryMB,
+					"job_type":          j.Spec.JobType,
+					"queue":             j.Spec.Queue,
+					"checkpoint":        j.Spec.CheckpointURI,
+					"artifact":          j.Spec.ArtifactURI,
+					"scheduler_id":      schedulerID,
+					"placement_policy":  "best_fit_gpu_devices",
+				})
+
+				continue
+			}
+
+			selectedGPUs, ok := selectGPUDevices(*selected, j.Spec)
+			if !ok {
+				log.Printf(
+					"placement deferred job_id=%s run_id=%s reason=%s",
+					j.JobID,
+					run.RunID,
+					"insufficient_gpu_devices_after_selection",
+				)
+
+				log.Printf(
+					"gang scheduling unsatisfied job_id=%s run_id=%s need_gpu=%d available=%d",
+					j.JobID,
+					run.RunID,
+					gpuNeeded,
+					countMatchingFreeGPUs(*selected, j.Spec),
+				)
+
+				_ = store.AddJobEvent(ctx, j.JobID, &run.RunID, "PLACEMENT_DEFERRED", map[string]any{
+					"reason":           "gang_unsatisfied",
+					"gpu_needed":       gpuNeeded,
+					"scheduler_id":     schedulerID,
+					"placement_policy": "best_fit_gpu_devices_gang",
+				})
+
+				continue
+			}
+
+			selectedIDs := make([]string, 0, len(selectedGPUs))
+			selectedType := ""
+			for _, g := range selectedGPUs {
+				selectedIDs = append(selectedIDs, g.ID)
+				if selectedType == "" {
+					selectedType = g.Type
+				}
+			}
+
 			log.Printf(
-				"selected node for job_id=%s run_id=%s node=%s need_gpu=%d free_gpu=%d job_type=%s",
+				"selected node for job_id=%s run_id=%s node=%s gpu_ids=%v need_gpu=%d free_gpu=%d post_free_gpu=%d selected_gpu_type=%s req_gpu_type=%s min_gpu_memory_mb=%d job_type=%s policy=%s",
 				j.JobID,
 				run.RunID,
-				node.Name,
+				selected.Name,
+				selectedIDs,
 				gpuNeeded,
-				node.FreeGPUs(),
+				selected.FreeGPUs(),
+				bestPostFree,
+				selectedType,
+				j.Spec.GPUType,
+				j.Spec.MinGPUMemoryMB,
 				j.Spec.JobType,
+				"best_fit_gpu_devices",
 			)
 
 			_ = store.AddJobEvent(ctx, j.JobID, &run.RunID, "PLACEMENT_SELECTED", map[string]any{
-				"node":       node.Name,
-				"gpu_needed": gpuNeeded,
-				"free_gpu":   node.FreeGPUs(),
-				"job_type":   j.Spec.JobType,
-				"queue":      j.Spec.Queue,
-				"checkpoint": j.Spec.CheckpointURI,
-				"artifact":   j.Spec.ArtifactURI,
+				"node":               selected.Name,
+				"gpu_needed":         gpuNeeded,
+				"free_gpu":           selected.FreeGPUs(),
+				"post_free_gpu":      bestPostFree,
+				"gpu_type":           selectedType,
+				"requested_gpu_type": j.Spec.GPUType,
+				"min_gpu_memory_mb":  j.Spec.MinGPUMemoryMB,
+				"selected_gpu_ids":   selectedIDs,
+				"selected_gpu_count": len(selectedIDs),
+				"job_type":           j.Spec.JobType,
+				"queue":              j.Spec.Queue,
+				"checkpoint":         j.Spec.CheckpointURI,
+				"artifact":           j.Spec.ArtifactURI,
+				"scheduler_id":       schedulerID,
+				"placement_policy":   "best_fit_gpu_devices",
 			})
-
 			jobName := fmt.Sprintf("run-%s", run.RunID.String())
-
 			command := j.Spec.Command
 
 			if j.Spec.JobType == "training" {
@@ -696,10 +975,22 @@ echo "training complete"
 				"STATUS_PATH":    fmt.Sprintf("/status/%s.json", run.RunID.String()),
 			}
 
+			if len(selectedIDs) > 0 {
+				env["GPU_DEVICE_IDS"] = strings.Join(selectedIDs, ",")
+			}
+
+			log.Printf(
+				"dispatch env job_id=%s run_id=%s gpu_ids=%s",
+				j.JobID,
+				run.RunID,
+				env["GPU_DEVICE_IDS"],
+			)
+
 			_ = store.AddJobEvent(ctx, j.JobID, &run.RunID, "DISPATCH_REQUESTED", map[string]any{
 				"k8s_job_name": jobName,
 				"image":        j.Spec.Image,
 				"job_type":     j.Spec.JobType,
+				"scheduler_id": schedulerID,
 			})
 
 			if j.Spec.JobType == "training" && j.Spec.CheckpointURI != "" {
@@ -726,7 +1017,7 @@ echo "training complete"
 
 			alreadyDispatched, existingJobName, err := store.RunAlreadyDispatched(ctx, run.RunID)
 			if err != nil {
-				log.Printf("dispatch check error job_id=%s run_id=%s err=%v", j.JobID, run.RunID, err)
+				log.Printf("[%s] Dispatch check error job_id=%s run_id=%s err=%v", schedulerID, j.JobID, run.RunID, err)
 				continue
 			}
 			if alreadyDispatched {
@@ -768,8 +1059,8 @@ echo "training complete"
 
 			//_ = store.MarkRunDispatched(ctx, run.RunID, jobName)
 
-			log.Printf("DISPATCHED job_id=%s run_id=%s k8s_job=%s",
-				j.JobID, run.RunID, jobName)
+			log.Printf("[%s] DISPATCHED job_id=%s run_id=%s k8s_job=%s",
+				schedulerID, j.JobID, run.RunID, jobName)
 		}
 	}
 }
@@ -806,22 +1097,6 @@ func parseQueues(raw string) []string {
 	return out
 }
 
-func applyGPUUsage(nodes []NodeCapacity, usage map[string]int) []NodeCapacity {
-	out := make([]NodeCapacity, len(nodes))
-	copy(out, nodes)
-
-	for i := range out {
-		out[i].UsedGPUs = usage[out[i].Name]
-		if out[i].UsedGPUs < 0 {
-			out[i].UsedGPUs = 0
-		}
-		if out[i].UsedGPUs > out[i].TotalGPUs {
-			out[i].UsedGPUs = out[i].TotalGPUs
-		}
-	}
-	return out
-}
-
 func nextQueueOrder(queues []string, start int) []string {
 	if len(queues) == 0 {
 		return []string{"default"}
@@ -832,6 +1107,13 @@ func nextQueueOrder(queues []string, start int) []string {
 		out = append(out, queues[idx])
 	}
 	return out
+}
+
+func queueQuotaFor(queue string) int {
+	if q, ok := queueGPUQuota[queue]; ok {
+		return q
+	}
+	return 1 << 30 // effectively no quota
 }
 
 func floatPtrEqual(a, b *float64) bool {
